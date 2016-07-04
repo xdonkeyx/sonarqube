@@ -103,6 +103,7 @@ import org.sonar.db.version.v60.CleanMeasuresWithNullAnalysisUuid;
 import org.sonar.db.version.v60.CleanOrphanRowsInProjects;
 import org.sonar.db.version.v60.CleanOrphanRowsInResourceIndex;
 import org.sonar.db.version.v60.CleanOrphanRowsInSnapshots;
+import org.sonar.db.version.v60.CleanUsurperRootComponents;
 import org.sonar.db.version.v60.DeleteOrphanDuplicationsIndexRowsWithoutAnalysis;
 import org.sonar.db.version.v60.DeleteOrphanDuplicationsIndexRowsWithoutComponent;
 import org.sonar.db.version.v60.DeleteOrphanMeasuresWithoutComponent;
@@ -300,7 +301,8 @@ public class MigrationStepModule extends Module {
       AddAnalysisUuidColumnToMeasures.class,
       PopulateAnalysisUuidOnMeasures.class,
       CleanMeasuresWithNullAnalysisUuid.class,
-      MakeAnalysisUuidNotNullOnMeasures.class
-    );
+      MakeAnalysisUuidNotNullOnMeasures.class,
+
+      CleanUsurperRootComponents.class);
   }
 }
