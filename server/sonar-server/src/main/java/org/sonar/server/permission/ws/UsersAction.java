@@ -20,6 +20,8 @@
 package org.sonar.server.permission.ws;
 
 import com.google.common.base.Optional;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.TreeMultimap;
 import java.util.List;
 import org.sonar.api.server.ws.Request;
 import org.sonar.api.server.ws.Response;
@@ -29,17 +31,15 @@ import org.sonar.api.utils.Paging;
 import org.sonar.db.DbClient;
 import org.sonar.db.DbSession;
 import org.sonar.db.component.ComponentDto;
-import org.sonar.db.permission.OldPermissionQuery;
 import org.sonar.db.permission.PermissionQuery;
-import org.sonar.db.permission.UserWithPermissionDto;
+import org.sonar.db.permission.UserRef;
+import org.sonar.db.user.UserPermissionDto;
 import org.sonar.server.permission.PermissionFinder;
 import org.sonar.server.user.UserSession;
 import org.sonarqube.ws.WsPermissions;
 import org.sonarqube.ws.WsPermissions.UsersWsResponse;
 import org.sonarqube.ws.client.permission.UsersWsRequest;
 
-import static com.google.common.base.Strings.nullToEmpty;
-import static org.sonar.api.utils.Paging.forPageIndex;
 import static org.sonar.db.permission.PermissionQuery.DEFAULT_PAGE_SIZE;
 import static org.sonar.db.permission.PermissionQuery.RESULTS_MAX_SIZE;
 import static org.sonar.server.permission.PermissionPrivilegeChecker.checkProjectAdminUserByComponentDto;
@@ -99,11 +99,12 @@ public class UsersAction implements PermissionsWsAction {
     try {
       Optional<ComponentDto> project = dependenciesFinder.searchProject(dbSession, wsProjectRef);
       checkProjectAdminUserByComponentDto(userSession, project);
-      OldPermissionQuery permissionQuery = buildPermissionQuery(request, project);
-      Long projectIdIfPresent = project.isPresent() ? project.get().getId() : null;
-      int total = dbClient.permissionDao().countUsers(dbSession, permissionQuery, projectIdIfPresent);
-      List<UserWithPermissionDto> usersWithPermission = permissionFinder.findUsersWithPermission(dbSession, permissionQuery);
-      return buildResponse(usersWithPermission, forPageIndex(request.getPage()).withPageSize(request.getPageSize()).andTotal(total));
+      PermissionQuery.Builder dbQuery = buildPermissionQuery(request, project);
+      List<UserRef> users = permissionFinder.findUsers(dbSession, dbQuery);
+      int total = dbClient.permissionDao().countUsersByQuery(dbSession, dbQuery.build());
+      List<UserPermissionDto> userPermissions = permissionFinder.findUserPermissions(dbSession, dbQuery, users);
+      Paging paging = Paging.forPageIndex(request.getPage()).withPageSize(request.getPageSize()).andTotal(total);
+      return buildResponse(users, userPermissions, paging);
     } finally {
       dbClient.closeSession(dbSession);
     }
@@ -111,7 +112,7 @@ public class UsersAction implements PermissionsWsAction {
 
   private static UsersWsRequest toUsersWsRequest(Request request) {
     return new UsersWsRequest()
-      .setPermission(request.mandatoryParam(PARAM_PERMISSION))
+      .setPermission(request.param(PARAM_PERMISSION))
       .setProjectId(request.param(PARAM_PROJECT_ID))
       .setProjectKey(request.param(PARAM_PROJECT_KEY))
       .setQuery(request.param(Param.TEXT_QUERY))
@@ -119,39 +120,46 @@ public class UsersAction implements PermissionsWsAction {
       .setPageSize(request.mandatoryParamAsInt(Param.PAGE_SIZE));
   }
 
-  private static UsersWsResponse buildResponse(List<UserWithPermissionDto> usersWithPermission, Paging paging) {
-    UsersWsResponse.Builder userResponse = UsersWsResponse.newBuilder();
-    WsPermissions.User.Builder user = WsPermissions.User.newBuilder();
-    for (UserWithPermissionDto userWithPermission : usersWithPermission) {
-      userResponse.addUsers(
-        user
-          .clear()
-          .setLogin(userWithPermission.getLogin())
-          .setName(nullToEmpty(userWithPermission.getName()))
-          .setEmail(nullToEmpty(userWithPermission.getEmail()))
-          .setSelected(userWithPermission.getPermission() != null));
-    }
+  private static UsersWsResponse buildResponse(List<UserRef> users, List<UserPermissionDto> userPermissions, Paging paging) {
+    Multimap<Long, String> permissionsByUserId = TreeMultimap.create();
+    userPermissions.forEach(userPermission -> permissionsByUserId.put(userPermission.getUserId(), userPermission.getPermission()));
 
-    userResponse.getPagingBuilder()
-      .clear()
+    UsersWsResponse.Builder response = UsersWsResponse.newBuilder();
+    users.forEach(user -> {
+      WsPermissions.User.Builder userResponse = response.addUsersBuilder()
+        .setLogin(user.getLogin())
+        .addAllPermissions(permissionsByUserId.get(user.getId()));
+
+      if (user.getEmail() != null) {
+        userResponse.setEmail(user.getEmail());
+      }
+      if (user.getName() != null) {
+        userResponse.setName(user.getName());
+      }
+    });
+
+    response.getPagingBuilder()
       .setPageIndex(paging.pageIndex())
       .setPageSize(paging.pageSize())
       .setTotal(paging.total())
       .build();
 
-    return userResponse.build();
+    return response.build();
   }
 
-  private static OldPermissionQuery buildPermissionQuery(UsersWsRequest request, Optional<ComponentDto> project) {
-    OldPermissionQuery.Builder permissionQuery = OldPermissionQuery.builder()
-      .permission(request.getPermission())
-      .pageIndex(request.getPage())
-      .pageSize(request.getPageSize())
-      .search(request.getQuery());
+  private static PermissionQuery.Builder buildPermissionQuery(UsersWsRequest request, Optional<ComponentDto> project) {
+    PermissionQuery.Builder dbQuery = PermissionQuery.builder()
+      .setPermission(request.getPermission())
+      .setPageIndex(request.getPage())
+      .setPageSize(request.getPageSize())
+      .setSearchQuery(request.getQuery());
     if (project.isPresent()) {
-      permissionQuery.component(project.get().getKey());
+      dbQuery.setComponentUuid(project.get().uuid());
+    }
+    if (request.getPermission() != null) {
+      dbQuery.withPermissionOnly();
     }
 
-    return permissionQuery.build();
+    return dbQuery;
   }
 }

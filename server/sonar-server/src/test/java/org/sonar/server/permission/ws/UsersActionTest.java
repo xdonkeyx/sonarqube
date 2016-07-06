@@ -33,6 +33,8 @@ import org.sonar.db.DbSession;
 import org.sonar.db.DbTester;
 import org.sonar.db.component.ComponentDto;
 import org.sonar.db.component.ResourceTypesRule;
+import org.sonar.db.permission.PermissionDbTester;
+import org.sonar.db.user.UserDbTester;
 import org.sonar.db.user.UserDto;
 import org.sonar.db.user.UserPermissionDto;
 import org.sonar.server.component.ComponentFinder;
@@ -46,6 +48,8 @@ import org.sonar.server.ws.WsActionTester;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.sonar.api.web.UserRole.ISSUE_ADMIN;
+import static org.sonar.core.permission.GlobalPermissions.QUALITY_GATE_ADMIN;
+import static org.sonar.core.permission.GlobalPermissions.QUALITY_PROFILE_ADMIN;
 import static org.sonar.core.permission.GlobalPermissions.SCAN_EXECUTION;
 import static org.sonar.core.permission.GlobalPermissions.SYSTEM_ADMIN;
 import static org.sonar.db.component.ComponentTesting.newProjectDto;
@@ -65,10 +69,14 @@ public class UsersActionTest {
 
   @Rule
   public DbTester db = DbTester.create(System2.INSTANCE);
-  ResourceTypesRule resourceTypes = new ResourceTypesRule().setRootQualifiers(Qualifiers.PROJECT, Qualifiers.VIEW, "DEV");
+  UserDbTester userDb = new UserDbTester(db);
+  PermissionDbTester permissionDb = new PermissionDbTester(db);
   DbClient dbClient = db.getDbClient();
   DbSession dbSession = db.getSession();
+
   WsActionTester ws;
+  ResourceTypesRule resourceTypes = new ResourceTypesRule().setRootQualifiers(Qualifiers.PROJECT, Qualifiers.VIEW, "DEV");
+
   UsersAction underTest;
 
   @Before
@@ -83,15 +91,16 @@ public class UsersActionTest {
 
   @Test
   public void search_for_users_with_response_example() {
-    UserDto user1 = insertUser(new UserDto().setLogin("admin").setName("Administrator").setEmail("admin@admin.com"));
-    UserDto user2 = insertUser(new UserDto().setLogin("george.orwell").setName("George Orwell").setEmail("george.orwell@1984.net"));
-    insertUserRole(new UserPermissionDto().setPermission(SCAN_EXECUTION).setUserId(user1.getId()));
-    insertUserRole(new UserPermissionDto().setPermission(SCAN_EXECUTION).setUserId(user2.getId()));
-    dbSession.commit();
+    UserDto user1 = userDb.insertUser(new UserDto().setLogin("admin").setName("Administrator").setEmail("admin@admin.com"));
+    UserDto user2 = userDb.insertUser(new UserDto().setLogin("george.orwell").setName("George Orwell").setEmail("george.orwell@1984.net"));
+    permissionDb.addGlobalPermissionToUser(SYSTEM_ADMIN, user1.getId());
+    permissionDb.addGlobalPermissionToUser(QUALITY_GATE_ADMIN, user1.getId());
+    permissionDb.addGlobalPermissionToUser(QUALITY_PROFILE_ADMIN, user1.getId());
+    permissionDb.addGlobalPermissionToUser(SCAN_EXECUTION, user2.getId());
 
-    String result = ws.newRequest().setParam("permission", "scan").execute().getInput();
+    String result = ws.newRequest().execute().getInput();
 
-    assertJson(result).isSimilarTo(getClass().getResource("users-example.json"));
+    assertJson(result).withStrictArrayOrder().isSimilarTo(getClass().getResource("users-example.json"));
   }
 
   @Test
@@ -99,7 +108,7 @@ public class UsersActionTest {
     insertUsers();
     String result = ws.newRequest().setParam("permission", "scan").execute().getInput();
 
-    assertJson(result).isSimilarTo(getClass().getResource("UsersActionTest/users.json"));
+    assertJson(result).withStrictArrayOrder().isSimilarTo(getClass().getResource("UsersActionTest/users.json"));
   }
 
   @Test
@@ -137,8 +146,6 @@ public class UsersActionTest {
   public void search_for_users_with_select_as_a_parameter() {
     insertUsers();
     String result = ws.newRequest()
-      .setParam("permission", "scan")
-      .setParam(Param.SELECTED, SelectionMode.ALL.value())
       .execute().getInput();
 
     assertThat(result).contains("login-1", "login-2", "login-3");
@@ -152,13 +159,6 @@ public class UsersActionTest {
       .setParam(PARAM_PERMISSION, UserRole.ISSUE_ADMIN)
       .setParam(Param.SELECTED, SelectionMode.ALL.value())
       .execute();
-  }
-
-  @Test
-  public void fail_if_permission_parameter_is_not_filled() {
-    expectedException.expect(IllegalArgumentException.class);
-
-    ws.newRequest().execute();
   }
 
   @Test

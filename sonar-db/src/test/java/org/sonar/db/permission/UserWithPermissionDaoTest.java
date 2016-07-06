@@ -169,8 +169,8 @@ public class UserWithPermissionDaoTest {
       .hasSize(4)
       .extracting(UserRef::getName)
       .containsExactly("1-name", "2-name", "3-name", "4-name");
-    assertThat(users.get(0)).extracting(UserRef::getEmail, UserRef::getLogin)
-      .containsExactly(user1.getEmail(), user1.getLogin());
+    assertThat(users.get(0)).extracting(UserRef::getId, UserRef::getEmail, UserRef::getLogin)
+      .containsExactly(user1.getId(), user1.getEmail(), user1.getLogin());
     assertThat(count).isEqualTo(4);
 
     assertThat(permissions).hasSize(5).extracting(UserPermissionDto::getUserId, UserPermissionDto::getPermission)
